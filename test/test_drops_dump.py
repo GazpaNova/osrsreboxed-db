@@ -754,3 +754,25 @@ def test_cached_manta_ray_keeps_its_other_seed_pools():
     ] == [(30, 99)]
     seeds = [row for row in manta["entries"] if row.get("section") == "Seeds" and row.get("item_id")]
     assert len(seeds) == 28
+
+
+def test_explicit_named_location_notes_apply_to_every_referencing_row():
+    """HTML refs, Refn and NamedRef preserve conditions without repeating an item name."""
+    text = """
+{{Infobox Monster|id=123}}
+==Drops==
+===Other===
+{{DropsLine|name=Trading sticks|quantity=1|rarity=1/128|raritynotes=<ref group="d" name="karamja">Only dropped by Hobgoblins on [[Karamja]], in place of the regular coin drops.</ref>}}
+{{DropsLine|name=Trading sticks|quantity=5|rarity=12/128|raritynotes=<ref group="d" name="karamja"/>}}
+{{DropsLine|name=Iron med helm|quantity=1|rarity=5/128|raritynotes={{Refn|group=d|name=giant|Only dropped by giants on the Giants' Plateau.}}}}
+{{DropsLine|name=Steel scimitar|quantity=1|rarity=2/128|raritynotes={{Refn|group=d|name=giant}}}}
+{{DropsLine|name=Pyrophosphite|quantity=1|rarity=18/118|raritynotes={{Refn|Only dropped by ancient zygomites on Fossil Island.|group=d|name=island}}}}
+{{DropsLine|name=Volcanic ash|quantity=2|rarity=16/590|raritynotes={{NamedRef|island|group=d}}}}
+{{DropsLine|name=Coins|quantity=1|rarity=1/128}}
+"""
+    rows = drops_wikitext.parse_all_drop_tables(text)[0].drops
+    assert len(rows) == 7
+    for first, reference in ((0, 1), (2, 3), (4, 5)):
+        assert rows[first].notes
+        assert rows[reference].notes == rows[first].notes
+    assert rows[-1].notes == []

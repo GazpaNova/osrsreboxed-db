@@ -458,7 +458,6 @@ def parse_tertiary_rarity(rarity: str) -> Optional[Tuple[int, int]]:
 # Drop line notes
 # ---------------------------------------------------------------------------
 
-WIKI_LINK = re.compile(r"\[\[([^|\]]+)")
 F2P_NOTE = re.compile(r"free[\s-]*to[\s-]*play", re.I)
 F2P_ONLY_DROP = re.compile(
     r"only dropped in(?:\s*\[\[)?\s*free[\s-]*to[\s-]*play", re.I
@@ -718,38 +717,8 @@ GROUP_D_REF_TAG_STRIP = re.compile(r"<ref[^>]*group\s*=\s*['\"]?d['\"]?[^>]*/?>"
 
 
 def collect_named_footnotes(section_body: str) -> Dict[str, str]:
-    """Collect ``<ref name="…" group="d">…</ref>`` footnote bodies from a section.
-
-    Definitions embedded in a ``{{DropsLine}}`` note field count too, since the
-    wiki often defines a footnote on the first drop line that uses it.
-
-    :param section_body: Wikitext of one drop subsection.
-    :return: Dictionary of ref name to cleaned footnote text.
-    """
-    refs = _parse_named_footnotes(section_body)
-    for _, params in extract_templates(section_body, "DropsLine"):
-        for field_name in ("namenotes", "raritynotes"):
-            value = params.get(field_name, "")
-            if not value.strip():
-                continue
-            for name, text in _parse_named_footnotes(value).items():
-                refs.setdefault(name, text)
-    return refs
-
-
-def _parse_named_footnotes(section_body: str) -> Dict[str, str]:
-    refs: Dict[str, str] = {}
-    for match in NAMED_REF.finditer(section_body):
-        attrs = match.group(1)
-        if not re.search(r"group", attrs, re.I) or "d" not in attrs.lower():
-            continue
-        name_match = REF_NAME.search(attrs.strip())
-        if not name_match:
-            continue
-        text = clean_wiki_notes(match.group(2))
-        if text:
-            refs.setdefault(name_match.group(1).strip(), text)
-    return refs
+    """Resolve drop-row notes through the same named refs as source bundles."""
+    return collect_named_drop_footnotes(section_body)
 
 
 def parse_inline_note_fields(*fields: str) -> List[str]:
@@ -786,21 +755,11 @@ def _refn_note(params: Dict[str, str]) -> Optional[str]:
 def _resolve_named_ref_links(
     name_notes: str, rarity_notes: str, named_refs: Dict[str, str]
 ) -> List[str]:
-    if not named_refs:
-        return []
-    combined = f"{name_notes} {rarity_notes}"
-    resolved = []
-    for match in SELF_CLOSING_REF.finditer(combined):
-        attrs = match.group(1)
-        if not re.search(r"group", attrs, re.I) or "d" not in attrs.lower():
-            continue
-        name_match = REF_NAME.search(attrs.strip())
-        if not name_match:
-            continue
-        note = named_refs.get(name_match.group(1).strip())
-        if note:
-            resolved.append(note)
-    return resolved
+    return [
+        named_refs[name]
+        for name in named_drop_refs(name_notes, rarity_notes)
+        if name in named_refs
+    ]
 
 
 # Footnotes that make two adjacent rows one slot: "X and Y are dropped together".
@@ -898,47 +857,6 @@ def bundle_ref_for(params: Dict[str, str], bundle_refs: Dict[str, str]) -> str:
         if name in bundle_refs:
             return name
     return ""
-
-
-def _note_mentions_item(drop_name: str, note: str) -> bool:
-    normalized_drop = _normalize_item_name(drop_name)
-    if not normalized_drop:
-        return False
-    for match in WIKI_LINK.finditer(note):
-        candidate = _normalize_item_name(match.group(1))
-        if candidate and (
-            normalized_drop == candidate
-            or normalized_drop in candidate
-            or candidate in normalized_drop
-        ):
-            return True
-    return normalized_drop in _normalize_item_name(note)
-
-
-def _relevant_to_drop(drop_name: str, note: str) -> bool:
-    """Decide whether a shared footnote actually applies to this drop line."""
-    name = drop_name.lower()
-    text = note.lower()
-
-    if "looting bag" in text or ("wilderness" in text and "bag" in text):
-        return "looting bag" in name
-    if "key" in text and "medium" in text:
-        return "key" in name
-    if TRANSFORM_ITEM_NOTE.search(text) or ("clue" in text and "scroll" in text):
-        return "clue scroll" in name
-    if TRANSFORM_RATE_NOTE.search(text) and "easy" in text:
-        return "clue scroll" in name and "easy" in name
-    if TRANSFORM_RATE_NOTE.search(text) and "clue" in text:
-        return "clue scroll" in name
-    if "free-to-play" in text or "free to play" in text:
-        return False
-    if "increases to" in text or "decreases to" in text:
-        return name == "nothing"
-    return _note_mentions_item(drop_name, note)
-
-
-def _normalize_item_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
 
 def _should_skip_f2p_drop(params: Dict[str, str], attached_notes: List[str]) -> bool:
@@ -1489,11 +1407,8 @@ def _parse_drop_line(
     ):
         rarity = alternate
 
-    relevant_notes = parse_inline_note_fields(name_notes, rarity_notes) + [
-        note
-        for note in _resolve_named_ref_links(name_notes, rarity_notes, named_refs)
-        if _relevant_to_drop(name, note)
-    ]
+    # An explicit row reference applies even when its text does not repeat the item name.
+    relevant_notes = attached_notes
     notes = classify_notes(list(dict.fromkeys(relevant_notes)), name)
 
     if rarity.strip().lower() == "always" and section != SECTION_TERTIARY:
