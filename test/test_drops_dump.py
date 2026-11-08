@@ -776,3 +776,18 @@ def test_explicit_named_location_notes_apply_to_every_referencing_row():
         assert rows[first].notes
         assert rows[reference].notes == rows[first].notes
     assert rows[-1].notes == []
+
+
+def test_cached_zalcano_death_runes_keep_current_source_range():
+    from scripts.drops import update
+
+    pages = update.load_monster_wikitext()
+    items = drops_tables.ItemIdLookup([FakeItem(560, "Death rune")])
+    parsed = drops_wikitext.parse_all_drop_tables(pages["Zalcano"])[0]
+    table = drops_tables.build_table_json(
+        drops_tables.build_table_spec("Zalcano", parsed, items)
+    )
+    row = next(row for row in table["entries"] if row.get("item_id") == 560)
+    assert row["quantity"] == [201, 1046]
+    assert row["weight"] == 1
+    assert row["out_of"] == table["main_max_roll"] == 36
